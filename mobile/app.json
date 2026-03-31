@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "DermaTrace",
+    "slug": "dermatrace",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "com.dermatrace.app",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.dermatrace.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
+    },
+    "plugins": ["expo-camera"]
+  }
+}
