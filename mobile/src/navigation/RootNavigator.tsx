@@ -1,4 +1,5 @@
 import React from 'react';
+import {View, Text, StyleSheet} from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
@@ -17,10 +18,6 @@ import {RecommendationsScreen} from '../screens/insights/RecommendationsScreen';
 import {ProfileScreen} from '../screens/profile/ProfileScreen';
 import {SubscriptionScreen} from '../screens/profile/SubscriptionScreen';
 import {BillingScreen} from '../screens/profile/BillingScreen';
-
-// ---------------------------------------------------------------------------
-// Stack / Tab types
-// ---------------------------------------------------------------------------
 
 export type AuthStackParamList = {
   Login: undefined;
@@ -66,7 +63,46 @@ const InsightsStackNav = createNativeStackNavigator<InsightsStackParamList>();
 const ProfileStackNav = createNativeStackNavigator<ProfileStackParamList>();
 
 // ---------------------------------------------------------------------------
-// AuthStack
+// Tab icons — pure React Native, no external icon library
+// ---------------------------------------------------------------------------
+
+function TabIcon({name, focused}: {name: string; focused: boolean}) {
+  const color = focused ? '#1A6FD4' : '#94A3B8';
+  const icons: Record<string, string> = {
+    Dashboard: '⊞',
+    Products: '◫',
+    Reactions: '◎',
+    Insights: '◈',
+    Profile: '◉',
+  };
+
+  // Use Unicode geometric shapes as clean minimal icons
+  const unicodeIcons: Record<string, {active: string; inactive: string}> = {
+    Dashboard: {active: '▦', inactive: '▦'},
+    Products: {active: '▣', inactive: '▣'},
+    Reactions: {active: '◉', inactive: '◎'},
+    Insights: {active: '◈', inactive: '◇'},
+    Profile: {active: '●', inactive: '○'},
+  };
+
+  const icon = unicodeIcons[name] ?? {active: '●', inactive: '○'};
+
+  return (
+    <View style={tabIconStyles.container}>
+      <Text style={[tabIconStyles.icon, {color}]}>
+        {focused ? icon.active : icon.inactive}
+      </Text>
+    </View>
+  );
+}
+
+const tabIconStyles = StyleSheet.create({
+  container: {alignItems: 'center', justifyContent: 'center'},
+  icon: {fontSize: 20},
+});
+
+// ---------------------------------------------------------------------------
+// Stacks
 // ---------------------------------------------------------------------------
 
 function AuthStack() {
@@ -79,136 +115,93 @@ function AuthStack() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// ProductsStack
-// ---------------------------------------------------------------------------
-
 function ProductsStack() {
   return (
     <ProductsStackNav.Navigator
       screenOptions={{
         headerStyle: {backgroundColor: '#FFFFFF'},
-        headerTintColor: '#4A90D9',
-        headerTitleStyle: {color: '#1A1A2E', fontWeight: '600'},
+        headerTintColor: '#1A6FD4',
+        headerTitleStyle: {color: '#0F172A', fontWeight: '600'},
+        headerShadowVisible: false,
       }}>
-      <ProductsStackNav.Screen
-        name="ProductList"
-        component={ProductListScreen}
-        options={{headerShown: false}}
-      />
-      <ProductsStackNav.Screen
-        name="AddProduct"
-        component={AddProductScreen}
-        options={{title: 'Add Product', headerBackTitle: 'Back'}}
-      />
+      <ProductsStackNav.Screen name="ProductList" component={ProductListScreen} options={{headerShown: false}} />
+      <ProductsStackNav.Screen name="AddProduct" component={AddProductScreen} options={{title: 'Add Product'}} />
       <ProductsStackNav.Screen
         name="ProductDetail"
         component={ProductDetailScreen}
-        options={({route}) => ({
-          title: route.params.product.name,
-          headerBackTitle: 'Back',
-        })}
+        options={({route}) => ({title: route.params.product.name})}
       />
     </ProductsStackNav.Navigator>
   );
 }
-
-// ---------------------------------------------------------------------------
-// ReactionsStack
-// ---------------------------------------------------------------------------
 
 function ReactionsStack() {
   return (
     <ReactionsStackNav.Navigator
       screenOptions={{
         headerStyle: {backgroundColor: '#FFFFFF'},
-        headerTintColor: '#4A90D9',
-        headerTitleStyle: {color: '#1A1A2E', fontWeight: '600'},
+        headerTintColor: '#1A6FD4',
+        headerTitleStyle: {color: '#0F172A', fontWeight: '600'},
+        headerShadowVisible: false,
       }}>
-      <ReactionsStackNav.Screen
-        name="ReactionList"
-        component={ReactionListScreen}
-        options={{headerShown: false}}
-      />
-      <ReactionsStackNav.Screen
-        name="AddReaction"
-        component={AddReactionScreen}
-        options={{title: 'Log Reaction', headerBackTitle: 'Back'}}
-      />
+      <ReactionsStackNav.Screen name="ReactionList" component={ReactionListScreen} options={{headerShown: false}} />
+      <ReactionsStackNav.Screen name="AddReaction" component={AddReactionScreen} options={{title: 'Log Reaction'}} />
     </ReactionsStackNav.Navigator>
   );
 }
-
-// ---------------------------------------------------------------------------
-// InsightsStack
-// ---------------------------------------------------------------------------
 
 function InsightsStack() {
   return (
     <InsightsStackNav.Navigator
       screenOptions={{
         headerStyle: {backgroundColor: '#FFFFFF'},
-        headerTintColor: '#4A90D9',
-        headerTitleStyle: {color: '#1A1A2E', fontWeight: '600'},
+        headerTintColor: '#1A6FD4',
+        headerTitleStyle: {color: '#0F172A', fontWeight: '600'},
+        headerShadowVisible: false,
       }}>
-      <InsightsStackNav.Screen
-        name="TriggerAnalysis"
-        component={TriggerAnalysisScreen}
-        options={{title: 'Insights'}}
-      />
-      <InsightsStackNav.Screen
-        name="Recommendations"
-        component={RecommendationsScreen}
-        options={{title: 'Recommendations', headerBackTitle: 'Back'}}
-      />
+      <InsightsStackNav.Screen name="TriggerAnalysis" component={TriggerAnalysisScreen} options={{title: 'Insights'}} />
+      <InsightsStackNav.Screen name="Recommendations" component={RecommendationsScreen} options={{title: 'Recommendations'}} />
     </InsightsStackNav.Navigator>
   );
 }
-
-// ---------------------------------------------------------------------------
-// ProfileStack
-// ---------------------------------------------------------------------------
 
 function ProfileStack() {
   return (
     <ProfileStackNav.Navigator
       screenOptions={{
         headerStyle: {backgroundColor: '#FFFFFF'},
-        headerTintColor: '#4A90D9',
-        headerTitleStyle: {color: '#1A1A2E', fontWeight: '600'},
+        headerTintColor: '#1A6FD4',
+        headerTitleStyle: {color: '#0F172A', fontWeight: '600'},
+        headerShadowVisible: false,
       }}>
-      <ProfileStackNav.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{title: 'Profile'}}
-      />
-      <ProfileStackNav.Screen
-        name="Subscription"
-        component={SubscriptionScreen}
-        options={{title: 'Subscription', headerBackTitle: 'Back'}}
-      />
-      <ProfileStackNav.Screen
-        name="Billing"
-        component={BillingScreen}
-        options={{title: 'Billing', headerBackTitle: 'Back'}}
-      />
+      <ProfileStackNav.Screen name="Profile" component={ProfileScreen} options={{title: 'Profile'}} />
+      <ProfileStackNav.Screen name="Subscription" component={SubscriptionScreen} options={{title: 'Subscription'}} />
+      <ProfileStackNav.Screen name="Billing" component={BillingScreen} options={{title: 'Checkout'}} />
     </ProfileStackNav.Navigator>
   );
 }
 
-// ---------------------------------------------------------------------------
-// AppTabs
-// ---------------------------------------------------------------------------
-
 function AppTabs() {
   return (
     <AppTabsNav.Navigator
-      screenOptions={{
+      screenOptions={({route}) => ({
         headerShown: false,
-        tabBarStyle: {backgroundColor: '#FFFFFF'},
-        tabBarActiveTintColor: '#4A90D9',
-        tabBarInactiveTintColor: '#9B9B9B',
-      }}>
+        tabBarIcon: ({focused}) => <TabIcon name={route.name} focused={focused} />,
+        tabBarActiveTintColor: '#1A6FD4',
+        tabBarInactiveTintColor: '#94A3B8',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#F1F5F9',
+          borderTopWidth: 1,
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '500',
+        },
+      })}>
       <AppTabsNav.Screen name="Dashboard" component={DashboardScreen} />
       <AppTabsNav.Screen name="Products" component={ProductsStack} />
       <AppTabsNav.Screen name="Reactions" component={ReactionsStack} />
@@ -218,13 +211,8 @@ function AppTabs() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// RootNavigator
-// ---------------------------------------------------------------------------
-
 export function RootNavigator() {
   const accessToken = useAuthStore(state => state.accessToken);
-
   return (
     <NavigationContainer>
       {accessToken == null ? <AuthStack /> : <AppTabs />}
