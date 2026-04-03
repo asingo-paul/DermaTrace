@@ -7,11 +7,12 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
-  Linking,
   TextInput,
+  Linking,
 } from 'react-native';
 import {useQuery, useMutation, useQueryClient} from '@tanstack/react-query';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {useStripe, CardField, CardFieldInput} from '@stripe/stripe-react-native';
 import {api} from '../../lib/api';
 import {ProfileStackParamList} from '../../navigation/RootNavigator';
 
@@ -30,13 +31,11 @@ interface BillingData {
   transactions: Transaction[];
 }
 
+type PaymentMethod = 'card' | 'paypal' | 'mpesa' | 'airtel' | null;
 type Props = NativeStackScreenProps<ProfileStackParamList, 'Billing'>;
-type PaymentMethod = 'card' | 'paypal' | null;
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  });
+  return new Date(iso).toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
 }
 
 function statusColor(s: string): string {
@@ -48,18 +47,18 @@ function statusColor(s: string): string {
 export function BillingScreen({route}: Props) {
   const {plan} = route.params;
   const queryClient = useQueryClient();
+  const {createPaymentMethod, confirmPayment} = useStripe();
 
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>(null);
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [cvv, setCvv] = useState('');
-  const [stripeLoading, setStripeLoading] = useState(false);
-  const [paypalLoading, setPaypalLoading] = useState(false);
+  const [cardDetails, setCardDetails] = useState<CardFieldInput.Details | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const planLabel = plan === 'annual' ? 'Annual — $39.99 / year' : 'Monthly — $4.99 / month';
   const planAmount = plan === 'annual' ? '$39.99' : '$4.99';
+  const planAmountKES = plan === 'annual' ? 'KES 3,999' : 'KES 499';
 
-  const {data, isLoading} = useQuery<BillingData>({
+  const {data} = useQuery<BillingData>({
     queryKey: ['billing'],
     queryFn: async () => {
       const res = await api.get<BillingData>('/payments/history');
@@ -67,53 +66,50 @@ export function BillingScreen({route}: Props) {
     },
   });
 
-  async function handleCardPayment() {
-    if (cardNumber.replace(/\s/g, '').length < 16) {
-      Alert.alert('Invalid Card', 'Please enter a valid 16-digit card number.');
+  async function handlePay() {
+    if (!selectedMethod) {
+      Alert.alert('Select a payment method', 'Please choose how you want to pay.');
       return;
     }
-    if (expiry.length < 5) {
-      Alert.alert('Invalid Expiry', 'Please enter expiry in MM/YY format.');
-      return;
-    }
-    if (cvv.length < 3) {
-      Alert.alert('Invalid CVV', 'Please enter a valid CVV.');
-      return;
-    }
-    setStripeLoading(true);
-    try {
-      const intentRes = await api.post('/payments/create-intent', {plan});
-      const clientSecret: string = intentRes.data.client_secret;
-      // In production this would use Stripe SDK to confirm with card details
-      // For now we confirm the intent was created successfully
-      if (clientSecret) {
-        queryClient.invalidateQueries({queryKey: ['subscription']});
-        queryClient.invalidateQueries({queryKey: ['billing']});
-        Alert.alert('Payment Initiated', 'Your payment is being processed. Your account will be upgraded shortly.');
-      }
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail ?? 'Payment failed. Please try again.';
-      Alert.alert('Error', msg);
-    } finally {
-      setStripeLoading(false);
-    }
-  }
 
-  async function handlePayPalPayment() {
-    setPaypalLoading(true);
+    setLoading(true);
     try {
-      const res = await api.post('/payments/paypal/create-order', {plan});
-      const {approval_url, order_id} = res.data;
-      const supported = await Linking.canOpenURL(approval_url);
-      if (supported) {
+      if (selectedMethod === 'card') {
+        if (!cardDetails?.complete) {
+          Alert.alert('Incomplete', 'Please enter your full card details.');
+          setLoading(false);
+          return;
+        }
+        const {paymentMethod, error: pmError} = await createPaymentMethod({paymentMethodType: 'Card'});
+        if (pmError || !paymentMethod) {
+          Alert.alert('Card Error', pmError?.message ?? 'Could not process card.');
+          setLoading(false);
+          return;
+        }
+        const intentRes = await api.post('/payments/create-intent', {plan});
+        const {error, paymentIntent} = await confirmPayment(intentRes.data.client_secret, {
+          paymentMethodType: 'Card',
+          paymentMethodData: {paymentMethodId: paymentMethod.id},
+        });
+        if (error) {
+          Alert.alert('Payment Failed', error.message);
+        } else if (paymentIntent) {
+          queryClient.invalidateQueries({queryKey: ['subscription']});
+          queryClient.invalidateQueries({queryKey: ['billing']});
+          Alert.alert('Payment Successful', 'Welcome to Pro!');
+        }
+
+      } else if (selectedMethod === 'paypal') {
+        const res = await api.post('/payments/paypal/create-order', {plan});
+        const {approval_url, order_id} = res.data;
         await Linking.openURL(approval_url);
         Alert.alert(
           'Complete Payment',
-          'Once you have approved the payment in PayPal, tap Confirm.',
+          'Once you have approved the payment in your browser, tap Confirm.',
           [
             {text: 'Cancel', style: 'cancel'},
             {
-              text: 'I have paid',
+              text: 'Confirm',
               onPress: async () => {
                 try {
                   await api.post('/payments/paypal/capture', {order_id});
@@ -127,35 +123,41 @@ export function BillingScreen({route}: Props) {
             },
           ],
         );
-      } else {
-        Alert.alert('Error', 'Cannot open PayPal. Please try card payment instead.');
+
+      } else if (selectedMethod === 'mpesa') {
+        if (!phoneNumber.trim()) {
+          Alert.alert('Required', 'Enter your M-Pesa phone number (e.g. 0712345678).');
+          setLoading(false);
+          return;
+        }
+        const res = await api.post('/payments/mpesa/stk-push', {plan, phone_number: phoneNumber.trim()});
+        Alert.alert(
+          'STK Push Sent',
+          res.data.message ?? 'Check your phone and enter your M-Pesa PIN to complete payment.',
+        );
+
+      } else if (selectedMethod === 'airtel') {
+        if (!phoneNumber.trim()) {
+          Alert.alert('Required', 'Enter your Airtel Money number (e.g. 0733123456).');
+          setLoading(false);
+          return;
+        }
+        const res = await api.post('/payments/airtel/pay', {plan, phone_number: phoneNumber.trim()});
+        Alert.alert(
+          'Request Sent',
+          res.data.message ?? 'Check your phone and approve the Airtel Money payment request.',
+        );
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.detail ?? 'Could not create PayPal order.';
+      const msg = err?.response?.data?.detail ?? 'Payment failed. Please try again.';
       Alert.alert('Error', msg);
     } finally {
-      setPaypalLoading(false);
+      setLoading(false);
     }
   }
 
-  function formatCardNumber(text: string) {
-    const cleaned = text.replace(/\D/g, '').slice(0, 16);
-    return cleaned.replace(/(.{4})/g, '$1 ').trim();
-  }
-
-  function formatExpiry(text: string) {
-    const cleaned = text.replace(/\D/g, '').slice(0, 4);
-    if (cleaned.length >= 3) return `${cleaned.slice(0, 2)}/${cleaned.slice(2)}`;
-    return cleaned;
-  }
-
-  if (isLoading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1A6FD4" />
-      </View>
-    );
-  }
+  const isMobileMethod = selectedMethod === 'mpesa' || selectedMethod === 'airtel';
+  const isCardMethod = selectedMethod === 'card';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -167,128 +169,138 @@ export function BillingScreen({route}: Props) {
         </View>
         <Text style={styles.planLabel}>{planLabel}</Text>
         <Text style={styles.planNote}>
-          {plan === 'annual' ? 'Save 33% vs monthly · Best value' : 'Billed monthly · Cancel anytime'}
+          {plan === 'annual' ? 'Save 33% vs monthly · ' : ''}{planAmountKES} · 14 days free trial
         </Text>
       </View>
 
-      {/* Payment method selector */}
-      <Text style={styles.sectionLabel}>Choose Payment Method</Text>
-      <View style={styles.methodRow}>
-        <TouchableOpacity
-          style={[styles.methodBtn, selectedMethod === 'card' && styles.methodBtnActive]}
-          onPress={() => setSelectedMethod('card')}
-          activeOpacity={0.8}>
-          <Text style={styles.methodIcon}>💳</Text>
-          <Text style={[styles.methodText, selectedMethod === 'card' && styles.methodTextActive]}>
-            Debit / Credit Card
-          </Text>
-        </TouchableOpacity>
+      {/* Payment method selection */}
+      <Text style={styles.sectionLabel}>Choose payment method</Text>
 
+      {[
+        {
+          id: 'card',
+          label: 'Debit / Credit Card',
+          sub: 'Visa, Mastercard',
+          logo: <View style={styles.logoRow}>
+            <View style={[styles.logoBadge, {backgroundColor: '#1A1F71'}]}><Text style={styles.logoBadgeText}>VISA</Text></View>
+            <View style={[styles.logoBadge, {backgroundColor: '#EB001B'}]}><Text style={styles.logoBadgeText}>MC</Text></View>
+          </View>,
+        },
+        {
+          id: 'paypal',
+          label: 'PayPal',
+          sub: 'Pay via PayPal account',
+          logo: <View style={[styles.logoBadge, {backgroundColor: '#003087', paddingHorizontal: 10}]}><Text style={styles.logoBadgeText}>PayPal</Text></View>,
+        },
+        {
+          id: 'mpesa',
+          label: 'M-Pesa',
+          sub: 'Lipa na Pochi la Biashara · STK Push',
+          logo: <View style={[styles.logoBadge, {backgroundColor: '#00A651', paddingHorizontal: 10}]}><Text style={styles.logoBadgeText}>M-PESA</Text></View>,
+        },
+        {
+          id: 'airtel',
+          label: 'Airtel Money',
+          sub: 'Direct STK Push to your number',
+          logo: <View style={[styles.logoBadge, {backgroundColor: '#E40000', paddingHorizontal: 10}]}><Text style={styles.logoBadgeText}>Airtel</Text></View>,
+        },
+      ].map(method => (
         <TouchableOpacity
-          style={[styles.methodBtn, selectedMethod === 'paypal' && styles.methodBtnActive]}
-          onPress={() => setSelectedMethod('paypal')}
-          activeOpacity={0.8}>
-          <Text style={styles.methodIcon}>🅿</Text>
-          <Text style={[styles.methodText, selectedMethod === 'paypal' && styles.methodTextActive]}>
-            PayPal
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Card form */}
-      {selectedMethod === 'card' && (
-        <View style={styles.card}>
-          <Text style={styles.fieldLabel}>Card Number</Text>
-          <TextInput
-            style={styles.input}
-            value={cardNumber}
-            onChangeText={t => setCardNumber(formatCardNumber(t))}
-            placeholder="1234 5678 9012 3456"
-            placeholderTextColor="#94A3B8"
-            keyboardType="numeric"
-            maxLength={19}
-          />
-          <View style={styles.cardRow}>
-            <View style={styles.cardRowField}>
-              <Text style={styles.fieldLabel}>Expiry</Text>
-              <TextInput
-                style={styles.input}
-                value={expiry}
-                onChangeText={t => setExpiry(formatExpiry(t))}
-                placeholder="MM/YY"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                maxLength={5}
-              />
-            </View>
-            <View style={styles.cardRowField}>
-              <Text style={styles.fieldLabel}>CVV</Text>
-              <TextInput
-                style={styles.input}
-                value={cvv}
-                onChangeText={t => setCvv(t.replace(/\D/g, '').slice(0, 4))}
-                placeholder="123"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                secureTextEntry
-                maxLength={4}
-              />
-            </View>
+          key={method.id}
+          style={[styles.methodRow, selectedMethod === method.id && styles.methodRowActive]}
+          onPress={() => setSelectedMethod(method.id as PaymentMethod)}
+          activeOpacity={0.7}>
+          <View style={[styles.radio, selectedMethod === method.id && styles.radioActive]}>
+            {selectedMethod === method.id && <View style={styles.radioDot} />}
           </View>
+          <View style={styles.methodText}>
+            <Text style={[styles.methodLabel, selectedMethod === method.id && styles.methodLabelActive]}>
+              {method.label}
+            </Text>
+            <Text style={styles.methodSub}>{method.sub}</Text>
+          </View>
+          {method.logo}
+        </TouchableOpacity>
+      ))}
 
-          <TouchableOpacity
-            style={[styles.payBtn, stripeLoading && styles.btnDisabled]}
-            onPress={handleCardPayment}
-            disabled={stripeLoading}
-            activeOpacity={0.85}>
-            {stripeLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.payBtnText}>Pay {planAmount}</Text>
-            )}
-          </TouchableOpacity>
+      {/* Card input */}
+      {isCardMethod && (
+        <View style={styles.inputSection}>
+          <Text style={styles.inputLabel}>Card details</Text>
+          <CardField
+            postalCodeEnabled={false}
+            placeholders={{number: '4242 4242 4242 4242'}}
+            cardStyle={cardFieldStyle}
+            style={styles.cardField}
+            onCardChange={details => setCardDetails(details)}
+          />
         </View>
       )}
 
-      {/* PayPal */}
-      {selectedMethod === 'paypal' && (
-        <View style={styles.card}>
-          <Text style={styles.paypalInfo}>
-            You'll be redirected to PayPal to complete your payment securely.
+      {/* Phone number input for M-Pesa / Airtel */}
+      {isMobileMethod && (
+        <View style={styles.inputSection}>
+          <Text style={styles.inputLabel}>
+            {selectedMethod === 'mpesa' ? 'M-Pesa phone number' : 'Airtel Money number'}
           </Text>
-          <TouchableOpacity
-            style={[styles.paypalBtn, paypalLoading && styles.btnDisabled]}
-            onPress={handlePayPalPayment}
-            disabled={paypalLoading}
-            activeOpacity={0.85}>
-            {paypalLoading ? (
-              <ActivityIndicator color="#003087" />
-            ) : (
-              <Text style={styles.paypalBtnText}>Continue to PayPal</Text>
-            )}
-          </TouchableOpacity>
+          <TextInput
+            style={styles.phoneInput}
+            value={phoneNumber}
+            onChangeText={setPhoneNumber}
+            placeholder={selectedMethod === 'mpesa' ? '0712 345 678' : '0733 123 456'}
+            placeholderTextColor="#94A3B8"
+            keyboardType="phone-pad"
+            maxLength={13}
+          />
+          <Text style={styles.phoneHint}>
+            {selectedMethod === 'mpesa'
+              ? 'You will receive an STK push to pay via Pochi la Biashara'
+              : 'You will receive an Airtel Money payment request on your phone'}
+          </Text>
         </View>
       )}
+
+      {/* Pay button */}
+      <TouchableOpacity
+        style={[styles.payBtn, (!selectedMethod || loading) && styles.btnDisabled]}
+        onPress={handlePay}
+        disabled={!selectedMethod || loading}
+        activeOpacity={0.85}>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.payBtnText}>
+            {selectedMethod
+              ? `Pay ${isMobileMethod ? planAmountKES : planAmount}`
+              : 'Select a payment method'}
+          </Text>
+        )}
+      </TouchableOpacity>
 
       <Text style={styles.secureNote}>
-        Secured by Stripe · 256-bit SSL encryption
+        Payments are processed securely. We never store your card or PIN details.
       </Text>
 
       {/* Transaction history */}
       {data?.transactions && data.transactions.length > 0 && (
         <>
-          <Text style={[styles.sectionLabel, {marginTop: 24}]}>Billing History</Text>
-          <View style={styles.card}>
+          <Text style={[styles.sectionLabel, {marginTop: 28}]}>Billing History</Text>
+          <View style={styles.historyCard}>
             {data.transactions.map((tx, i) => (
               <View key={tx.id} style={[styles.txRow, i > 0 && styles.txRowBorder]}>
                 <View style={styles.txLeft}>
                   <Text style={styles.txMethod}>
-                    {tx.payment_method === 'debit_card' ? 'Card' : 'PayPal'}
+                    {tx.payment_method === 'debit_card' ? 'Card'
+                      : tx.payment_method === 'mpesa' ? 'M-Pesa'
+                      : tx.payment_method === 'airtel_money' ? 'Airtel Money'
+                      : 'PayPal'}
                   </Text>
                   <Text style={styles.txDate}>{formatDate(tx.created_at)}</Text>
                 </View>
                 <View style={styles.txRight}>
-                  <Text style={styles.txAmount}>${tx.amount.toFixed(2)}</Text>
+                  <Text style={styles.txAmount}>
+                    {tx.currency === 'kes' ? `KES ${tx.amount}` : `$${tx.amount.toFixed(2)}`}
+                  </Text>
                   <Text style={[styles.txStatus, {color: statusColor(tx.status)}]}>
                     {tx.status}
                   </Text>
@@ -302,10 +314,18 @@ export function BillingScreen({route}: Props) {
   );
 }
 
+const cardFieldStyle: CardFieldInput.Styles = {
+  backgroundColor: '#F8FAFC',
+  textColor: '#0F172A',
+  placeholderColor: '#94A3B8',
+  borderColor: '#E2E8F0',
+  borderWidth: 1.5,
+  borderRadius: 10,
+};
+
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#FFFFFF'},
   content: {padding: 20, paddingBottom: 48},
-  centered: {flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF'},
 
   planCard: {
     backgroundColor: '#EFF6FF',
@@ -324,7 +344,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   planBadgeText: {fontSize: 11, fontWeight: '800', color: '#FFFFFF', letterSpacing: 1},
-  planLabel: {fontSize: 18, fontWeight: '700', color: '#0F172A', marginBottom: 4},
+  planLabel: {fontSize: 17, fontWeight: '700', color: '#0F172A', marginBottom: 4},
   planNote: {fontSize: 13, color: '#3B82F6'},
 
   sectionLabel: {
@@ -336,71 +356,86 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  methodRow: {flexDirection: 'row', gap: 12, marginBottom: 20},
-  methodBtn: {
-    flex: 1,
+  methodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 16,
+    marginBottom: 10,
+    gap: 14,
+    backgroundColor: '#FAFAFA',
+  },
+  methodRowActive: {borderColor: '#1A6FD4', backgroundColor: '#EFF6FF'},
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
   },
-  methodBtnActive: {borderColor: '#1A6FD4', backgroundColor: '#EFF6FF'},
-  methodIcon: {fontSize: 24},
-  methodText: {fontSize: 13, fontWeight: '500', color: '#64748B', textAlign: 'center'},
-  methodTextActive: {color: '#1A6FD4', fontWeight: '600'},
+  radioActive: {borderColor: '#1A6FD4'},
+  radioDot: {width: 10, height: 10, borderRadius: 5, backgroundColor: '#1A6FD4'},
+  methodText: {flex: 1},
+  methodLabel: {fontSize: 15, fontWeight: '600', color: '#374151'},
+  methodLabelActive: {color: '#1A6FD4'},
+  methodSub: {fontSize: 12, color: '#94A3B8', marginTop: 2},
 
-  card: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    marginBottom: 8,
+  logoRow: {flexDirection: 'row', gap: 4},
+  logoBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
 
-  fieldLabel: {fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8},
-  input: {
+  inputSection: {marginTop: 8, marginBottom: 16},
+  inputLabel: {fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8},
+  cardField: {width: '100%', height: 50, marginBottom: 4},
+  phoneInput: {
     height: 50,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
     borderRadius: 10,
     paddingHorizontal: 14,
-    fontSize: 15,
+    fontSize: 16,
     color: '#0F172A',
-    backgroundColor: '#FFFFFF',
-    marginBottom: 12,
+    backgroundColor: '#F8FAFC',
+    letterSpacing: 1,
   },
-  cardRow: {flexDirection: 'row', gap: 12},
-  cardRowField: {flex: 1},
+  phoneHint: {fontSize: 12, color: '#64748B', marginTop: 8, lineHeight: 17},
 
   payBtn: {
     backgroundColor: '#1A6FD4',
     borderRadius: 12,
-    height: 52,
+    height: 54,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 4,
+    marginTop: 8,
   },
-  payBtnText: {color: '#FFFFFF', fontSize: 15, fontWeight: '600'},
+  btnDisabled: {opacity: 0.45},
+  payBtnText: {color: '#FFFFFF', fontSize: 16, fontWeight: '600'},
 
-  paypalInfo: {fontSize: 14, color: '#64748B', lineHeight: 21, marginBottom: 16},
-  paypalBtn: {
-    backgroundColor: '#FFC439',
+  secureNote: {textAlign: 'center', fontSize: 12, color: '#94A3B8', marginTop: 14, lineHeight: 18},
+
+  historyCard: {
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
-  paypalBtnText: {color: '#003087', fontSize: 15, fontWeight: '600'},
-
-  btnDisabled: {opacity: 0.5},
-
-  secureNote: {textAlign: 'center', fontSize: 12, color: '#94A3B8', marginTop: 12, lineHeight: 18},
-
-  txRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12},
+  txRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14},
   txRowBorder: {borderTopWidth: 1, borderTopColor: '#F1F5F9'},
   txLeft: {flex: 1},
   txMethod: {fontSize: 14, fontWeight: '500', color: '#0F172A'},

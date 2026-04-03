@@ -25,6 +25,8 @@ dependencies = [
     "slowapi",
     "supabase",
     "python-dotenv",
+    "gunicorn",
+    "openai",
 ]
 
 [project.optional-dependencies]

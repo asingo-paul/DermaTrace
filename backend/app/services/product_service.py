@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache import cache
 from app.config import get_settings
 from app.models.product import Product
 from app.models.user import User
@@ -47,6 +48,8 @@ async def create_product(
     db.add(product)
     await db.commit()
     await db.refresh(product)
+    # Invalidate dashboard cache so next load reflects new product
+    await cache.delete(f"dashboard:{user.id}")
     return product
 
 
@@ -73,6 +76,7 @@ async def delete_product(
 
     await db.delete(product)
     await db.commit()
+    await cache.delete(f"dashboard:{user.id}")
 
 
 async def upload_product_image(

@@ -1,4 +1,4 @@
-"""Payments router — Stripe and PayPal endpoints."""
+"""Payments router — Stripe, PayPal, M-Pesa, and Airtel Money endpoints."""
 
 from typing import Literal
 
@@ -13,8 +13,12 @@ from app.services.payment_service import (
     create_paypal_order,
     create_stripe_intent,
     get_billing_history,
+    handle_airtel_webhook,
+    handle_mpesa_webhook,
     handle_paypal_webhook,
     handle_stripe_webhook,
+    initiate_airtel_payment,
+    initiate_mpesa_stk_push,
 )
 
 router = APIRouter()
@@ -30,6 +34,16 @@ class CreatePayPalOrderRequest(BaseModel):
 
 class CapturePayPalOrderRequest(BaseModel):
     order_id: str
+
+
+class MpesaPaymentRequest(BaseModel):
+    plan: Literal["monthly", "annual"]
+    phone_number: str
+
+
+class AirtelPaymentRequest(BaseModel):
+    plan: Literal["monthly", "annual"]
+    phone_number: str
 
 
 # ---------------------------------------------------------------------------
@@ -103,3 +117,53 @@ async def billing_history(
 ) -> dict:
     """Return the current user's billing history and subscription status."""
     return await get_billing_history(current_user.id, db)
+
+
+# ---------------------------------------------------------------------------
+# M-Pesa
+# ---------------------------------------------------------------------------
+
+@router.post("/mpesa/stk-push")
+async def mpesa_stk_push(
+    body: MpesaPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Initiate M-Pesa STK push to Pochi la Biashara."""
+    return await initiate_mpesa_stk_push(current_user.id, body.phone_number, body.plan, db)
+
+
+@router.post("/webhooks/mpesa")
+async def mpesa_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Receive M-Pesa STK push callback (public endpoint)."""
+    payload = await request.json()
+    await handle_mpesa_webhook(payload, db)
+    return {"ResultCode": 0, "ResultDesc": "Accepted"}
+
+
+# ---------------------------------------------------------------------------
+# Airtel Money
+# ---------------------------------------------------------------------------
+
+@router.post("/airtel/pay")
+async def airtel_pay(
+    body: AirtelPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Initiate Airtel Money STK push."""
+    return await initiate_airtel_payment(current_user.id, body.phone_number, body.plan, db)
+
+
+@router.post("/webhooks/airtel")
+async def airtel_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Receive Airtel Money payment callback (public endpoint)."""
+    payload = await request.json()
+    await handle_airtel_webhook(payload, db)
+    return {"status": "received"}

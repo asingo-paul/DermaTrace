@@ -1,14 +1,16 @@
-"""Router for product endpoints."""
+"""Router for product endpoints — includes AI image scanning."""
 
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.product import ProductCreateRequest, ProductResponse
+from app.services.ai_vision_service import scan_product_from_image
 from app.services.product_service import (
     create_product,
     delete_product,
@@ -17,6 +19,23 @@ from app.services.product_service import (
 )
 
 router = APIRouter()
+
+
+class ScanImageRequest(BaseModel):
+    image_url: str
+
+
+@router.post("/scan", status_code=status.HTTP_200_OK)
+async def scan_product_image(
+    body: ScanImageRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Use AI Vision to extract product name, brand, and ingredients from an image URL.
+
+    The image must already be uploaded to Supabase Storage.
+    Returns extracted product data to pre-fill the product form.
+    """
+    return await scan_product_from_image(body.image_url)
 
 
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)

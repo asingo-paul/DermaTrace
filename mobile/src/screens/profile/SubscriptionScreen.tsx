@@ -13,10 +13,6 @@ import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {api} from '../../lib/api';
 import {ProfileStackParamList} from '../../navigation/RootNavigator';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type SubscriptionTier = 'free' | 'trial' | 'pro';
 type BillingInterval = 'monthly' | 'annual';
 
@@ -29,44 +25,102 @@ interface SubscriptionData {
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'Subscription'>;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return new Date(iso).toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'});
 }
 
 function daysUntil(iso: string): number {
-  const diff = new Date(iso).getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  return Math.ceil((new Date(iso).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 }
 
-function tierLabel(tier: SubscriptionTier): string {
-  switch (tier) {
-    case 'pro':
-      return 'Pro';
-    case 'trial':
-      return 'Trial';
-    default:
-      return 'Free';
-  }
+// ---------------------------------------------------------------------------
+// Tier banner component
+// ---------------------------------------------------------------------------
+
+function TierBanner({tier, trialEndsAt, subscriptionEndsAt}: {
+  tier: SubscriptionTier;
+  trialEndsAt: string | null;
+  subscriptionEndsAt: string | null;
+}) {
+  const bannerConfig = {
+    pro: {
+      bg: '#EFF6FF',
+      border: '#BFDBFE',
+      badge: '#1A6FD4',
+      badgeText: 'PRO',
+      title: 'You\'re on Pro',
+      subtitle: subscriptionEndsAt ? `Renews ${formatDate(subscriptionEndsAt)}` : 'Active subscription',
+    },
+    trial: {
+      bg: '#FFFBEB',
+      border: '#FDE68A',
+      badge: '#D97706',
+      badgeText: 'TRIAL',
+      title: '14-Day Free Trial',
+      subtitle: trialEndsAt
+        ? `${Math.max(0, daysUntil(trialEndsAt))} days remaining · Ends ${formatDate(trialEndsAt)}`
+        : 'Trial active',
+    },
+    free: {
+      bg: '#F8FAFC',
+      border: '#E2E8F0',
+      badge: '#64748B',
+      badgeText: 'FREE',
+      title: 'Free Plan',
+      subtitle: '10 products · 20 reactions · No AI features',
+    },
+  };
+
+  const cfg = bannerConfig[tier];
+
+  return (
+    <View style={[banner.container, {backgroundColor: cfg.bg, borderColor: cfg.border}]}>
+      <View style={[banner.badge, {backgroundColor: cfg.badge}]}>
+        <Text style={banner.badgeText}>{cfg.badgeText}</Text>
+      </View>
+      <View style={banner.textBlock}>
+        <Text style={banner.title}>{cfg.title}</Text>
+        <Text style={banner.subtitle}>{cfg.subtitle}</Text>
+      </View>
+      {tier === 'pro' && (
+        <View style={banner.checkCircle}>
+          <Text style={banner.checkText}>✓</Text>
+        </View>
+      )}
+    </View>
+  );
 }
 
-function tierBadgeStyle(tier: SubscriptionTier) {
-  switch (tier) {
-    case 'pro':
-      return {backgroundColor: '#4A90D9'};
-    case 'trial':
-      return {backgroundColor: '#F39C12'};
-    default:
-      return {backgroundColor: '#9B9B9B'};
-  }
-}
+const banner = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  badge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  badgeText: {fontSize: 10, fontWeight: '800', color: '#FFFFFF', letterSpacing: 1},
+  textBlock: {flex: 1},
+  title: {fontSize: 15, fontWeight: '700', color: '#0F172A', marginBottom: 3},
+  subtitle: {fontSize: 12, color: '#64748B', lineHeight: 17},
+  checkCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1A6FD4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkText: {color: '#FFFFFF', fontSize: 14, fontWeight: '700'},
+});
 
 // ---------------------------------------------------------------------------
 // SubscriptionScreen
@@ -88,7 +142,7 @@ export function SubscriptionScreen({navigation}: Props) {
     mutationFn: () => api.post('/subscription/cancel'),
     onSuccess: () => {
       queryClient.invalidateQueries({queryKey: ['subscription']});
-      Alert.alert('Cancelled', 'Your subscription has been cancelled.');
+      Alert.alert('Cancelled', 'Your subscription has been cancelled. Access continues until end of billing period.');
     },
     onError: () => Alert.alert('Error', 'Failed to cancel subscription.'),
   });
@@ -103,41 +157,10 @@ export function SubscriptionScreen({navigation}: Props) {
     onError: () => Alert.alert('Error', 'Failed to switch plan.'),
   });
 
-  function handleCancel() {
-    Alert.alert(
-      'Cancel Subscription',
-      'Are you sure you want to cancel? You will lose Pro access at the end of your billing period.',
-      [
-        {text: 'Keep Subscription', style: 'cancel'},
-        {
-          text: 'Cancel Subscription',
-          style: 'destructive',
-          onPress: () => cancelMutation.mutate(),
-        },
-      ],
-    );
-  }
-
-  function handleSwitchPlan() {
-    const newInterval: BillingInterval =
-      data?.billing_interval === 'monthly' ? 'annual' : 'monthly';
-    Alert.alert(
-      'Switch Plan',
-      `Switch to ${newInterval === 'annual' ? 'Annual ($39.99/yr)' : 'Monthly ($4.99/mo)'}?`,
-      [
-        {text: 'Cancel', style: 'cancel'},
-        {
-          text: 'Switch',
-          onPress: () => changePlanMutation.mutate(newInterval),
-        },
-      ],
-    );
-  }
-
   if (isLoading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4A90D9" />
+        <ActivityIndicator size="large" color="#1A6FD4" />
       </View>
     );
   }
@@ -152,147 +175,134 @@ export function SubscriptionScreen({navigation}: Props) {
 
   const isPro = data.tier === 'pro';
   const isTrial = data.tier === 'trial';
-
-  // Warning banners
-  const showTrialWarning =
-    isTrial && data.trial_ends_at != null && daysUntil(data.trial_ends_at) <= 3;
-  const showRenewalWarning =
-    isPro && data.subscription_ends_at != null && daysUntil(data.subscription_ends_at) <= 3;
+  const trialExpiringSoon = isTrial && data.trial_ends_at != null && daysUntil(data.trial_ends_at) <= 3;
+  const renewalSoon = isPro && data.subscription_ends_at != null && daysUntil(data.subscription_ends_at) <= 3;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.screenTitle}>Subscription</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-      {/* Warning banners */}
-      {showTrialWarning && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningText}>⚠️ Your trial expires soon!</Text>
+      {/* Tier banner */}
+      <TierBanner
+        tier={data.tier}
+        trialEndsAt={data.trial_ends_at}
+        subscriptionEndsAt={data.subscription_ends_at}
+      />
+
+      {/* Urgency alerts */}
+      {trialExpiringSoon && (
+        <View style={styles.alertBanner}>
+          <Text style={styles.alertText}>
+            Your trial expires in {daysUntil(data.trial_ends_at!)} day{daysUntil(data.trial_ends_at!) !== 1 ? 's' : ''}. Upgrade now to keep Pro access.
+          </Text>
         </View>
       )}
-      {showRenewalWarning && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningText}>⚠️ Your subscription renews soon!</Text>
+      {renewalSoon && (
+        <View style={[styles.alertBanner, styles.alertBannerBlue]}>
+          <Text style={[styles.alertText, {color: '#1E40AF'}]}>
+            Your subscription renews in {daysUntil(data.subscription_ends_at!)} day{daysUntil(data.subscription_ends_at!) !== 1 ? 's' : ''}.
+          </Text>
         </View>
       )}
 
-      {/* Current tier card */}
-      <View style={styles.card}>
-        <View style={styles.tierRow}>
-          <Text style={styles.cardLabel}>Current Plan</Text>
-          <View style={[styles.tierBadge, tierBadgeStyle(data.tier)]}>
-            <Text style={styles.tierBadgeText}>{tierLabel(data.tier)}</Text>
-          </View>
-        </View>
-
-        {isTrial && data.trial_ends_at && (
-          <Text style={styles.dateText}>
-            Trial ends: {formatDate(data.trial_ends_at)}
-          </Text>
-        )}
-        {isPro && data.subscription_ends_at && (
-          <Text style={styles.dateText}>
-            Renews: {formatDate(data.subscription_ends_at)}
-          </Text>
-        )}
-      </View>
-
-      {/* Upgrade section (shown for free/trial) */}
+      {/* Pro features list */}
       {!isPro && (
-        <View style={styles.card}>
-          <Text style={styles.upgradeTitle}>Upgrade to Pro</Text>
-          <Text style={styles.upgradeSubtitle}>
-            Unlock unlimited products, AI trigger analysis, and more.
-          </Text>
+        <>
+          <Text style={styles.sectionLabel}>What you get with Pro</Text>
+          <View style={styles.featureCard}>
+            {[
+              'Unlimited product logging',
+              'Unlimited reaction tracking',
+              'AI trigger ingredient analysis',
+              'Personalized product recommendations',
+              'Ingredient label parser',
+              'Offline sync across devices',
+            ].map((f, i) => (
+              <View key={i} style={[styles.featureRow, i > 0 && styles.featureRowBorder]}>
+                <View style={styles.featureCheck}><Text style={styles.featureCheckText}>✓</Text></View>
+                <Text style={styles.featureText}>{f}</Text>
+              </View>
+            ))}
+          </View>
 
-          <View style={styles.planToggleRow}>
+          {/* Plan selection */}
+          <Text style={styles.sectionLabel}>Choose a plan</Text>
+          <View style={styles.planRow}>
             <TouchableOpacity
-              style={[
-                styles.planToggleBtn,
-                selectedPlan === 'monthly' && styles.planToggleBtnActive,
-              ]}
+              style={[styles.planCard, selectedPlan === 'monthly' && styles.planCardActive]}
               onPress={() => setSelectedPlan('monthly')}
               activeOpacity={0.7}>
-              <Text
-                style={[
-                  styles.planToggleText,
-                  selectedPlan === 'monthly' && styles.planToggleTextActive,
-                ]}>
-                Monthly
-              </Text>
-              <Text
-                style={[
-                  styles.planTogglePrice,
-                  selectedPlan === 'monthly' && styles.planToggleTextActive,
-                ]}>
-                $4.99/mo
-              </Text>
+              <Text style={[styles.planName, selectedPlan === 'monthly' && styles.planNameActive]}>Monthly</Text>
+              <Text style={[styles.planPrice, selectedPlan === 'monthly' && styles.planPriceActive]}>$4.99</Text>
+              <Text style={[styles.planPeriod, selectedPlan === 'monthly' && styles.planPeriodActive]}>/month</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[
-                styles.planToggleBtn,
-                selectedPlan === 'annual' && styles.planToggleBtnActive,
-              ]}
+              style={[styles.planCard, selectedPlan === 'annual' && styles.planCardActive]}
               onPress={() => setSelectedPlan('annual')}
               activeOpacity={0.7}>
-              <Text
-                style={[
-                  styles.planToggleText,
-                  selectedPlan === 'annual' && styles.planToggleTextActive,
-                ]}>
-                Annual
-              </Text>
-              <Text
-                style={[
-                  styles.planTogglePrice,
-                  selectedPlan === 'annual' && styles.planToggleTextActive,
-                ]}>
-                $39.99/yr
-              </Text>
+              <View style={styles.saveBadge}><Text style={styles.saveBadgeText}>SAVE 33%</Text></View>
+              <Text style={[styles.planName, selectedPlan === 'annual' && styles.planNameActive]}>Annual</Text>
+              <Text style={[styles.planPrice, selectedPlan === 'annual' && styles.planPriceActive]}>$39.99</Text>
+              <Text style={[styles.planPeriod, selectedPlan === 'annual' && styles.planPeriodActive]}>/year</Text>
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity
             style={styles.upgradeBtn}
             onPress={() => navigation.navigate('Billing', {plan: selectedPlan})}
-            activeOpacity={0.8}>
-            <Text style={styles.upgradeBtnText}>Upgrade</Text>
+            activeOpacity={0.85}>
+            <Text style={styles.upgradeBtnText}>
+              {isTrial ? 'Upgrade Now' : 'Start Free Trial'}
+            </Text>
           </TouchableOpacity>
-        </View>
+          <Text style={styles.trialNote}>14 days free · Cancel anytime · No hidden fees</Text>
+        </>
       )}
 
-      {/* Pro-only actions */}
+      {/* Pro management */}
       {isPro && (
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Billing</Text>
+        <View style={styles.manageCard}>
+          <Text style={styles.sectionLabel}>Manage Plan</Text>
 
           <TouchableOpacity
-            style={styles.switchPlanBtn}
-            onPress={handleSwitchPlan}
+            style={styles.actionRow}
+            onPress={() => {
+              const newInterval: BillingInterval = data.billing_interval === 'monthly' ? 'annual' : 'monthly';
+              Alert.alert(
+                'Switch Plan',
+                `Switch to ${newInterval === 'annual' ? 'Annual ($39.99/yr)' : 'Monthly ($4.99/mo)'}?`,
+                [
+                  {text: 'Cancel', style: 'cancel'},
+                  {text: 'Switch', onPress: () => changePlanMutation.mutate(newInterval)},
+                ],
+              );
+            }}
             disabled={changePlanMutation.isPending}
-            activeOpacity={0.8}>
-            {changePlanMutation.isPending ? (
-              <ActivityIndicator color="#4A90D9" />
-            ) : (
-              <Text style={styles.switchPlanText}>
-                Switch to{' '}
-                {data.billing_interval === 'monthly'
-                  ? 'Annual ($39.99/yr)'
-                  : 'Monthly ($4.99/mo)'}
-              </Text>
-            )}
+            activeOpacity={0.7}>
+            <Text style={styles.actionRowText}>
+              Switch to {data.billing_interval === 'monthly' ? 'Annual ($39.99/yr)' : 'Monthly ($4.99/mo)'}
+            </Text>
+            {changePlanMutation.isPending
+              ? <ActivityIndicator size="small" color="#1A6FD4" />
+              : <Text style={styles.actionRowChevron}>›</Text>}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.cancelBtn}
-            onPress={handleCancel}
-            disabled={cancelMutation.isPending}
-            activeOpacity={0.8}>
-            {cancelMutation.isPending ? (
-              <ActivityIndicator color="#E74C3C" />
-            ) : (
-              <Text style={styles.cancelBtnText}>Cancel Subscription</Text>
+            style={[styles.actionRow, styles.actionRowDanger]}
+            onPress={() => Alert.alert(
+              'Cancel Subscription',
+              'You will keep Pro access until the end of your billing period.',
+              [
+                {text: 'Keep Subscription', style: 'cancel'},
+                {text: 'Cancel', style: 'destructive', onPress: () => cancelMutation.mutate()},
+              ],
             )}
+            disabled={cancelMutation.isPending}
+            activeOpacity={0.7}>
+            <Text style={styles.actionRowDangerText}>Cancel Subscription</Text>
+            {cancelMutation.isPending
+              ? <ActivityIndicator size="small" color="#EF4444" />
+              : <Text style={styles.actionRowChevron}>›</Text>}
           </TouchableOpacity>
         </View>
       )}
@@ -300,82 +310,109 @@ export function SubscriptionScreen({navigation}: Props) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#FFFFFF'},
-  content: {padding: 16, paddingBottom: 40},
+  content: {padding: 20, paddingBottom: 48},
   centered: {flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF'},
-  screenTitle: {fontSize: 24, fontWeight: '700', color: '#1A1A2E', marginBottom: 16},
-  errorText: {color: '#E74C3C', fontSize: 14},
-  warningBanner: {
-    backgroundColor: '#FFF3CD',
+  errorText: {color: '#EF4444', fontSize: 14},
+
+  alertBanner: {
+    backgroundColor: '#FEF3C7',
     borderRadius: 10,
     padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#FBBF24',
-  },
-  warningText: {fontSize: 14, color: '#92400E', fontWeight: '500'},
-  card: {
-    backgroundColor: '#F5F7FA',
-    borderRadius: 12,
-    padding: 16,
     marginBottom: 16,
+    borderLeftWidth: 3,
+    borderLeftColor: '#D97706',
   },
-  cardLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6B7280',
+  alertBannerBlue: {backgroundColor: '#EFF6FF', borderLeftColor: '#1A6FD4'},
+  alertText: {fontSize: 13, color: '#92400E', lineHeight: 18},
+
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 10,
+    letterSpacing: 1,
+    marginBottom: 12,
   },
-  tierRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
-  tierBadge: {borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4},
-  tierBadgeText: {color: '#FFFFFF', fontSize: 13, fontWeight: '600'},
-  dateText: {fontSize: 14, color: '#6B7280', marginTop: 8},
-  upgradeTitle: {fontSize: 18, fontWeight: '700', color: '#1A1A2E', marginBottom: 4},
-  upgradeSubtitle: {fontSize: 14, color: '#6B7280', marginBottom: 16},
-  planToggleRow: {flexDirection: 'row', gap: 10, marginBottom: 16},
-  planToggleBtn: {
-    flex: 1,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    alignItems: 'center',
-  },
-  planToggleBtnActive: {borderColor: '#4A90D9', backgroundColor: '#EBF4FF'},
-  planToggleText: {fontSize: 14, fontWeight: '600', color: '#6B7280'},
-  planTogglePrice: {fontSize: 13, color: '#6B7280', marginTop: 2},
-  planToggleTextActive: {color: '#4A90D9'},
-  upgradeBtn: {
-    backgroundColor: '#4A90D9',
+
+  featureCard: {
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    paddingVertical: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    overflow: 'hidden',
+  },
+  featureRow: {flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12},
+  featureRowBorder: {borderTopWidth: 1, borderTopColor: '#F1F5F9'},
+  featureCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#DCFCE7',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureCheckText: {fontSize: 11, color: '#16A34A', fontWeight: '700'},
+  featureText: {fontSize: 14, color: '#0F172A', fontWeight: '500'},
+
+  planRow: {flexDirection: 'row', gap: 12, marginBottom: 16},
+  planCard: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    padding: 16,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  planCardActive: {borderColor: '#1A6FD4', backgroundColor: '#EFF6FF'},
+  saveBadge: {
+    position: 'absolute',
+    top: -10,
+    backgroundColor: '#10B981',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  saveBadgeText: {fontSize: 9, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.5},
+  planName: {fontSize: 14, fontWeight: '600', color: '#64748B', marginBottom: 4, marginTop: 8},
+  planNameActive: {color: '#1A6FD4'},
+  planPrice: {fontSize: 26, fontWeight: '800', color: '#0F172A'},
+  planPriceActive: {color: '#1A6FD4'},
+  planPeriod: {fontSize: 12, color: '#94A3B8'},
+  planPeriodActive: {color: '#3B82F6'},
+
+  upgradeBtn: {
+    backgroundColor: '#1A6FD4',
+    borderRadius: 12,
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   upgradeBtnText: {color: '#FFFFFF', fontSize: 16, fontWeight: '600'},
-  switchPlanBtn: {
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#4A90D9',
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 10,
+  trialNote: {textAlign: 'center', fontSize: 12, color: '#94A3B8'},
+
+  manageCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    overflow: 'hidden',
   },
-  switchPlanText: {color: '#4A90D9', fontSize: 15, fontWeight: '600'},
-  cancelBtn: {
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    backgroundColor: '#FFF0F0',
-    paddingVertical: 12,
+  actionRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
-  cancelBtnText: {color: '#E74C3C', fontSize: 15, fontWeight: '600'},
+  actionRowDanger: {borderBottomWidth: 0},
+  actionRowText: {fontSize: 15, color: '#0F172A', fontWeight: '500'},
+  actionRowDangerText: {fontSize: 15, color: '#EF4444', fontWeight: '500'},
+  actionRowChevron: {fontSize: 20, color: '#94A3B8'},
 });

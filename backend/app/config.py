@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     # Runtime environment
     ENV: str = "development"
 
+    # M-Pesa
+    MPESA_CONSUMER_KEY: str = ""
+    MPESA_CONSUMER_SECRET: str = ""
+    MPESA_PASSKEY: str = ""
+    APP_BASE_URL: str = "https://your-backend.railway.app"
+
+    # Airtel Money
+    AIRTEL_CLIENT_ID: str = ""
+    AIRTEL_CLIENT_SECRET: str = ""
+
+    # OpenAI
+    OPENAI_API_KEY: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

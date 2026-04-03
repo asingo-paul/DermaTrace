@@ -170,12 +170,63 @@ export function DashboardScreen() {
         </View>
 
         {!hasData ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Nothing here yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Start by logging a product you use daily
-            </Text>
-          </View>
+          <>
+            {/* Onboarding guide */}
+            <View style={styles.welcomeCard}>
+              <Text style={styles.welcomeTitle}>Welcome to DermaTrace</Text>
+              <Text style={styles.welcomeSubtitle}>
+                Here's how to get the most out of the app
+              </Text>
+            </View>
+
+            <Text style={styles.sectionLabel}>How to get started</Text>
+
+            {[
+              {
+                step: '1',
+                tab: 'Products',
+                title: 'Log your skincare products',
+                desc: 'Tap Products in the tab bar below. Add each product you use with its ingredient list.',
+                color: '#1A6FD4',
+              },
+              {
+                step: '2',
+                tab: 'Reactions',
+                title: 'Record any skin reactions',
+                desc: 'Tap Reactions to log symptoms like rash or itching and link them to products you used.',
+                color: '#F59E0B',
+              },
+              {
+                step: '3',
+                tab: 'Insights',
+                title: 'Discover your triggers',
+                desc: 'After logging 3+ reactions, tap Insights to run AI analysis and find problem ingredients.',
+                color: '#10B981',
+              },
+              {
+                step: '4',
+                tab: 'Profile',
+                title: 'Set your skin profile',
+                desc: 'Tap Profile to set your skin type and sensitivity level for better recommendations.',
+                color: '#8B5CF6',
+              },
+            ].map(item => (
+              <TouchableOpacity
+                key={item.step}
+                style={styles.guideCard}
+                onPress={() => navigation.navigate(item.tab as any)}
+                activeOpacity={0.7}>
+                <View style={[styles.guideStep, {backgroundColor: item.color}]}>
+                  <Text style={styles.guideStepText}>{item.step}</Text>
+                </View>
+                <View style={styles.guideContent}>
+                  <Text style={styles.guideTitle}>{item.title}</Text>
+                  <Text style={styles.guideDesc}>{item.desc}</Text>
+                </View>
+                <Text style={styles.guideArrow}>›</Text>
+              </TouchableOpacity>
+            ))}
+          </>
         ) : (
           <>
             {/* Timeline */}
@@ -398,6 +449,41 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {fontSize: 17, fontWeight: '600', color: '#0F172A', marginBottom: 6},
   emptySubtitle: {fontSize: 14, color: '#64748B', textAlign: 'center'},
+
+  // Onboarding guide
+  welcomeCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  welcomeTitle: {fontSize: 18, fontWeight: '700', color: '#0F172A', marginBottom: 4},
+  welcomeSubtitle: {fontSize: 14, color: '#3B82F6'},
+  guideCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    gap: 14,
+  },
+  guideStep: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideStepText: {fontSize: 14, fontWeight: '800', color: '#FFFFFF'},
+  guideContent: {flex: 1},
+  guideTitle: {fontSize: 14, fontWeight: '600', color: '#0F172A', marginBottom: 3},
+  guideDesc: {fontSize: 12, color: '#64748B', lineHeight: 17},
+  guideArrow: {fontSize: 22, color: '#CBD5E1'},
 
   // Upgrade modal
   modalOverlay: {

@@ -1,5 +1,6 @@
-"""Payment service — Stripe and PayPal integration."""
+"""Payment service — Stripe, PayPal, M-Pesa, and Airtel Money integration."""
 
+import base64
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -296,3 +297,254 @@ async def get_billing_history(user_id: uuid.UUID, db: AsyncSession) -> dict:
             for tx in transactions
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# M-Pesa (Safaricom STK Push — Lipa na Pochi la Biashara)
+# ---------------------------------------------------------------------------
+
+MPESA_BUSINESS_SHORTCODE = "174379"  # Sandbox shortcode — replace with Pochi number in prod
+MPESA_PASSKEY = ""  # Set in .env as MPESA_PASSKEY
+MPESA_BASE_URL = "https://sandbox.safaricom.co.ke"  # Use https://api.safaricom.co.ke in prod
+
+
+async def _get_mpesa_access_token() -> str:
+    """Get M-Pesa OAuth access token using explicit Base64 Basic Auth."""
+    import base64
+    mpesa_consumer_key = getattr(settings, "MPESA_CONSUMER_KEY", "")
+    mpesa_consumer_secret = getattr(settings, "MPESA_CONSUMER_SECRET", "")
+    credentials = base64.b64encode(
+        f"{mpesa_consumer_key}:{mpesa_consumer_secret}".encode()
+    ).decode()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials",
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json",
+            },
+        )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"M-Pesa auth failed: {response.text}",
+            )
+        return response.json()["access_token"]
+
+
+async def initiate_mpesa_stk_push(
+    user_id: uuid.UUID,
+    phone_number: str,
+    plan: str,
+    db: AsyncSession,
+) -> dict:
+    """Initiate M-Pesa STK Push to Pochi la Biashara number."""
+    amount_map = {"monthly": "499", "annual": "3999"}  # KES amounts
+    amount = amount_map.get(plan)
+    if not amount:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    # Sanitize phone: ensure format 2547XXXXXXXX
+    phone = phone_number.strip().replace("+", "").replace(" ", "")
+    if phone.startswith("0"):
+        phone = "254" + phone[1:]
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    mpesa_passkey = getattr(settings, "MPESA_PASSKEY", "")
+    password = base64.b64encode(
+        f"{MPESA_BUSINESS_SHORTCODE}{mpesa_passkey}{timestamp}".encode()
+    ).decode()
+
+    access_token = await _get_mpesa_access_token()
+
+    payload = {
+        "BusinessShortCode": MPESA_BUSINESS_SHORTCODE,
+        "Password": password,
+        "Timestamp": timestamp,
+        "TransactionType": "CustomerPayBillOnline",
+        "Amount": amount,
+        "PartyA": phone,
+        "PartyB": MPESA_BUSINESS_SHORTCODE,
+        "PhoneNumber": phone,
+        "CallBackURL": f"{getattr(settings, 'APP_BASE_URL', 'https://your-backend.railway.app')}/webhooks/mpesa",
+        "AccountReference": f"DermaTrace-{str(user_id)[:8]}",
+        "TransactionDesc": f"DermaTrace {plan} subscription",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        data = response.json()
+
+    if data.get("ResponseCode") != "0":
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("errorMessage", "M-Pesa STK push failed"),
+        )
+
+    # Store pending transaction
+    tx = Transaction(
+        user_id=user_id,
+        payment_method="mpesa",
+        external_tx_id=data.get("CheckoutRequestID", ""),
+        amount=float(amount) / 100,
+        currency="kes",
+        status="pending",
+    )
+    db.add(tx)
+    await db.commit()
+
+    return {
+        "checkout_request_id": data.get("CheckoutRequestID"),
+        "merchant_request_id": data.get("MerchantRequestID"),
+        "message": "STK push sent. Please check your phone and enter your M-Pesa PIN.",
+    }
+
+
+async def handle_mpesa_webhook(payload: dict, db: AsyncSession) -> None:
+    """Process M-Pesa STK push callback."""
+    body = payload.get("Body", {}).get("stkCallback", {})
+    result_code = body.get("ResultCode")
+    checkout_request_id = body.get("CheckoutRequestID")
+
+    result = await db.execute(
+        select(Transaction).where(Transaction.external_tx_id == checkout_request_id)
+    )
+    tx = result.scalar_one_or_none()
+    if tx is None:
+        return
+
+    if result_code == 0:
+        tx.status = "succeeded"
+        # Activate subscription
+        user_result = await db.execute(select(User).where(User.id == tx.user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            # Determine plan from amount
+            plan = "annual" if float(tx.amount) > 10 else "monthly"
+            activate_pro(user, plan, _subscription_ends_at(plan))
+    else:
+        tx.status = "failed"
+
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Airtel Money (STK Push)
+# ---------------------------------------------------------------------------
+
+AIRTEL_BASE_URL = "https://openapi.airtel.africa"
+
+
+async def _get_airtel_access_token() -> str:
+    """Get Airtel Money OAuth access token."""
+    airtel_client_id = getattr(settings, "AIRTEL_CLIENT_ID", "")
+    airtel_client_secret = getattr(settings, "AIRTEL_CLIENT_SECRET", "")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{AIRTEL_BASE_URL}/auth/oauth2/token",
+            json={
+                "client_id": airtel_client_id,
+                "client_secret": airtel_client_secret,
+                "grant_type": "client_credentials",
+            },
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+
+async def initiate_airtel_payment(
+    user_id: uuid.UUID,
+    phone_number: str,
+    plan: str,
+    db: AsyncSession,
+) -> dict:
+    """Initiate Airtel Money payment request (STK push to customer)."""
+    amount_map = {"monthly": "499", "annual": "3999"}  # KES amounts
+    amount = amount_map.get(plan)
+    if not amount:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    phone = phone_number.strip().replace("+", "").replace(" ", "")
+    if phone.startswith("0"):
+        phone = "254" + phone[1:]
+
+    reference = f"DT-{str(user_id)[:8]}"
+    access_token = await _get_airtel_access_token()
+
+    payload = {
+        "reference": reference,
+        "subscriber": {"country": "KE", "currency": "KES", "msisdn": phone},
+        "transaction": {
+            "amount": amount,
+            "country": "KE",
+            "currency": "KES",
+            "id": reference,
+        },
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{AIRTEL_BASE_URL}/merchant/v1/payments/",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "X-Country": "KE",
+                "X-Currency": "KES",
+            },
+        )
+        data = response.json()
+
+    status_code = data.get("status", {}).get("code", "")
+    if status_code not in ("200", "DP00800001006"):
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("status", {}).get("message", "Airtel Money request failed"),
+        )
+
+    tx = Transaction(
+        user_id=user_id,
+        payment_method="airtel_money",
+        external_tx_id=reference,
+        amount=float(amount) / 100,
+        currency="kes",
+        status="pending",
+    )
+    db.add(tx)
+    await db.commit()
+
+    return {
+        "reference": reference,
+        "message": "Payment request sent. Please check your phone and approve the Airtel Money request.",
+    }
+
+
+async def handle_airtel_webhook(payload: dict, db: AsyncSession) -> None:
+    """Process Airtel Money payment callback."""
+    transaction = payload.get("transaction", {})
+    reference = transaction.get("id")
+    airtel_status = transaction.get("status", "").upper()
+
+    result = await db.execute(
+        select(Transaction).where(Transaction.external_tx_id == reference)
+    )
+    tx = result.scalar_one_or_none()
+    if tx is None:
+        return
+
+    if airtel_status == "TS":  # Transaction Successful
+        tx.status = "succeeded"
+        user_result = await db.execute(select(User).where(User.id == tx.user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            plan = "annual" if float(tx.amount) > 10 else "monthly"
+            activate_pro(user, plan, _subscription_ends_at(plan))
+    else:
+        tx.status = "failed"
+
+    await db.commit()
